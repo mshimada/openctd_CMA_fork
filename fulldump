@@ -1,0 +1,189 @@
+#include <Wire.h>
+#include <SparkFun_MS5803_I2C.h>
+#include <SoftwareSerial.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <SPI.h>
+#include <SD.h>
+#include "RTClib.h"
+RTC_DS3231 rtc;
+
+float tempA;
+float tempB;
+float tempC;
+float pres;
+float EC_float = 0; // Electrical conductivity.
+float pressure_abs; //define absolute pressure variable
+
+int    Year;
+int    Month;
+int    Day;
+int    Hour;
+int    Minute;
+int    Second;
+
+unsigned long changeTime = 0;
+
+char EC_data[48];                       // A 48 byte character array to hold incoming data from the conductivity circuit.
+char * EC;                              // Character pointer for string parsing.
+
+byte received_from_sensor = 0;          // How many characters have been received.
+byte string_received = 0;               // Whether it received a string from the EC circuit.
+
+
+SoftwareSerial ecSerial(8, 9);          // Define the SoftwareSerial port for conductivity.
+OneWire oneWire(6);                     // Define the OneWire pin for temperature.
+DallasTemperature sensors( & oneWire);  // Define DallasTemperature input based on OneWire.
+MS5803 sensor(ADDRESS_HIGH);            // Define pressure sensor.
+
+
+void setup() {
+
+  Serial.begin(9600); // Set baud rate.
+  ecSerial.begin(9600); // Set baud rate for conductivty circuit.
+  pinMode(10, OUTPUT); // Set data output pin for the SD card reader.
+
+#ifndef ESP8266
+  while (!Serial); // for Leonardo/Micro/Zero
+#endif
+
+  if (! rtc.begin()) {
+    Serial.println("Couldn't find RTC");
+    while (1);
+  }
+
+  /* This line sets RTC time to sketch compile time on upload, uncomment to apply
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__))); */
+
+  /* Adjust this line to set UTC time, uncomment to apply
+    rtc.adjust(DateTime(2019, 4, 14, 22, 4, 30)); //Manual Set Time */
+
+  if (!SD.begin(4)) {
+    Serial.println("Card failed");
+    return;
+  }
+  SD.open("datalog.txt", FILE_WRITE);
+  delay(500); // Wait half a second before continuing.
+
+  sensor.reset(); //reset pressure sensor
+  sensor.begin(); //initialize pressure sensor
+  sensors.begin(); // Intialize the temperature sensors.
+
+  delay(250); // Wait a quarter second to continue.
+  Wire.begin();
+}
+
+void loop() {
+
+  if (millis() - changeTime > 1000) {
+    if (ecSerial.available() > 0) {
+      received_from_sensor = ecSerial.readBytesUntil(13, EC_data, 48);
+      EC_data[received_from_sensor] = 0; // Null terminate the data by setting the value after the final character to 0.
+    }
+
+    if ((EC_data[0] >= 48) && (EC_data[0] <= 57)) { // Parse data, if EC_data begins with a digit, not a letter (testing ASCII values).
+      parse_data();
+    }
+
+    sensors.requestTemperatures();
+    tempA = sensors.getTempCByIndex(0);
+    tempB = sensors.getTempCByIndex(1);
+    tempC = sensors.getTempCByIndex(2);
+    pres =  sensor.getPressure(ADC_4096);
+
+    if (pres == 0) { //Resets pressure sensor if null output detected
+      sensor.reset();
+      sensor.begin();
+    }
+
+    DateTime now = rtc.now();
+    Year    =  now.year();
+    Month   =  now.month();
+    Day     =  now.day();
+    Hour    =  now.hour();
+    Minute  =  now.minute();
+    Second  =  now.second();
+
+    // Log to the SD card...
+    File dataFile = SD.open("datalog.txt", FILE_WRITE);
+    if (dataFile) {
+      dataFile.print(Year, DEC);
+      if (Month < 10) {
+        dataFile.print("0");
+      }
+      dataFile.print(Month, DEC);
+      if (Day < 10) {
+        dataFile.print("0");
+      }
+      dataFile.print(Day, DEC);
+      dataFile.print("T");
+      if (Hour < 10) {
+        dataFile.print("0");
+      }
+      dataFile.print(Hour, DEC);
+      if (Minute < 10) {
+        dataFile.print("0");
+      }
+      dataFile.print(Minute, DEC);
+      if (Second < 10) {
+        dataFile.print("0");
+      }
+      dataFile.print(Second, DEC);
+      dataFile.print("Z ");
+      dataFile.print(pres);
+      dataFile.print("  ");
+      dataFile.print(tempA);
+      dataFile.print("  ");
+      dataFile.print(tempB);
+      dataFile.print("  ");
+      dataFile.print(tempC);
+      dataFile.print("  ");
+      dataFile.println(EC);
+      dataFile.close();
+    }
+    else {}
+
+    // Log to the serial monitor.
+    Serial.print(now.year(), DEC);
+    if (Month < 10) {
+      Serial.print("0");
+    }
+    Serial.print(now.month(), DEC);
+    if (Day < 10) {
+      Serial.print("0");
+    }
+    Serial.print(now.day(), DEC);
+    Serial.print("T");
+    if (Hour < 10) {
+      Serial.print("0");
+    }
+    Serial.print(now.hour(), DEC);
+    if (Minute < 10) {
+      Serial.print("0");
+    }
+    Serial.print(now.minute(), DEC);
+    if (Second < 10) {
+      Serial.print("0");
+    }
+    Serial.print(now.second(), DEC);
+    Serial.print("Z ");
+    Serial.print(pres);
+    Serial.print("  ");
+    Serial.print(tempA);
+    Serial.print("  ");
+    Serial.print(tempB);
+    Serial.print("  ");
+    Serial.print(tempC);
+    Serial.print("  ");
+    Serial.print(EC);
+    Serial.println("");
+
+    changeTime = millis();
+  }
+}
+
+// Parses data from the EC Circuit.
+void parse_data() {
+
+  EC = strtok(EC_data, ".");
+}
